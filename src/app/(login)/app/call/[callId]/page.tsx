@@ -12,7 +12,6 @@ import { CallRoom } from "@/components/site/pages/callroom/call-room";
 // Renders the LiveKit call UI for /app/call/<id>
 //
 
-export const instant = false;
 
 export default async function CallPage({
   params,

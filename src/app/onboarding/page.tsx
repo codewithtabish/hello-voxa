@@ -1,50 +1,47 @@
 // src/app/onboarding/page.tsx
-import React from "react";
-import { redirect } from "next/navigation";
-import { auth } from "@clerk/nextjs/server";
+import React, { Suspense } from "react";
 
-import { getUserAction } from "@/actions/users/get-user-action";
 import { LanguageOnboardingForm } from "@/components/site/pages/onboarding/language-onboarding-form";
+import { OnboardingGate } from "@/components/site/pages/onboarding/onboarding-gate";
 
 // ============================================
 // ONBOARDING PAGE
 // ============================================
 //
-// Reverse gate: if user already has languages,
-// bounce them straight into /app.
+// Static shell + streamed gate.
 //
-// Blocking route:
-//   In Next.js 16 with `cacheComponents`, a page that
-//   reads request data (cookies / headers / auth) must
-//   either stream via <Suspense> or opt out of prerender.
-//   We opt out here — onboarding is a per-user page.
+// The shell renders instantly. The auth check
+// and reverse-gate redirect happen inside
+// <Suspense>, which tells Next.js 16 not to
+// try to prerender the dynamic part.
 //
 
-export const instant = false;
-
-export default async function OnboardingPage() {
-  const { userId } = await auth();
-  if (!userId) redirect("/");
-
-  // Reverse gate — same logic as the /app layout gate
-  const result = await getUserAction();
-
-  if (result.success) {
-    const hasKnown = result.user.languages.some((l) => l.type === "KNOWN");
-    const hasLearning = result.user.languages.some(
-      (l) => l.type === "LEARNING",
-    );
-
-    if (hasKnown && hasLearning) {
-      redirect("/app");
-    }
-  }
-
+export default function OnboardingPage() {
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background px-4 py-10 text-foreground">
       <div className="w-full max-w-lg">
-        <LanguageOnboardingForm />
+        <Suspense fallback={<OnboardingSkeleton />}>
+          <OnboardingGate>
+            <LanguageOnboardingForm />
+          </OnboardingGate>
+        </Suspense>
       </div>
+    </div>
+  );
+}
+
+// ============================================
+// SKELETON
+// ============================================
+
+function OnboardingSkeleton() {
+  return (
+    <div className="animate-pulse rounded-3xl border border-border bg-card p-6">
+      <div className="mx-auto h-6 w-40 rounded bg-muted" />
+      <div className="mt-2 mx-auto h-4 w-64 rounded bg-muted" />
+      <div className="mt-6 h-10 rounded-xl bg-muted" />
+      <div className="mt-4 h-48 rounded-xl bg-muted" />
+      <div className="mt-4 h-12 rounded-2xl bg-muted" />
     </div>
   );
 }

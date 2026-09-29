@@ -56,66 +56,7 @@ export const metadata: Metadata = {
   description:
     "Transform your look with AI. Try new hairstyles, beard styles, outfits, hair colors, and age transformations in seconds. Free AI image generation included.",
   applicationName: "LYXA AI",
-  keywords: [
-    "AI hairstyle",
-    "AI beard style",
-    "virtual try on",
-    "AI hair color",
-    "age transformation",
-    "AI outfit swap",
-    "virtual makeover",
-    "AI beauty app",
-    "LYXA AI",
-  ],
-  authors: [{ name: "LYXA AI", url: "https://lyxa.ai" }],
-  creator: "LYXA AI",
-  publisher: "LYXA AI",
-  icons: {
-    icon: [
-      { url: "/favicon.ico" },
-      { url: "/icon.png", type: "image/png", sizes: "512x512" },
-    ],
-    apple: [{ url: "/apple-icon.png", sizes: "180x180" }],
-    shortcut: "/favicon.ico",
-  },
-  manifest: "/manifest.json",
-  openGraph: {
-    type: "website",
-    locale: "en_US",
-    url: "https://lyxa.ai",
-    siteName: "LYXA AI",
-    title: "LYXA AI — AI Hair, Beard & Style Try-On",
-    description:
-      "Transform your look with AI. Try new hairstyles, beard styles, outfits, and hair colors in seconds.",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "LYXA AI — Transform Your Look",
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "LYXA AI — AI Hair, Beard & Style Try-On",
-    description:
-      "Transform your look with AI. Try new hairstyles, beard styles, and outfits in seconds.",
-    images: ["/og-image.png"],
-    creator: "@lyxaai",
-  },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      "max-video-preview": -1,
-      "max-image-preview": "large",
-      "max-snippet": -1,
-    },
-  },
-  category: "technology",
+ 
 };
 
 // ============================================
