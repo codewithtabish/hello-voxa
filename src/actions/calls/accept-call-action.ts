@@ -1,10 +1,12 @@
 // src/actions/calls/accept-call-action.ts
 "use server";
 
+import { after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import prisma from "@/lib/clients/prisma-client";
 import { getLiveKitToken } from "@/lib/livekit/token";
+import { publishToInbox } from "@/lib/livekit/publish-to-inbox";
 
 type AcceptCallInput = {
   callId: string;
@@ -38,6 +40,7 @@ export async function acceptCallAction(
         id: true,
         status: true,
         receiverId: true,
+        callerId: true,
         livekitRoomName: true,
       },
     });
@@ -47,7 +50,7 @@ export async function acceptCallAction(
       return { success: false, error: "Not your call." };
     }
 
-    // If already connected, just hand back a fresh token
+    // Already connected — hand back a fresh token
     if (call.status === "CONNECTED") {
       const displayName =
         receiver.firstName ?? receiver.username ?? clerkId;
@@ -71,24 +74,40 @@ export async function acceptCallAction(
       return { success: false, error: "Call is no longer ringing." };
     }
 
-    const now = new Date();
+    // ─────────────────────────────────────────
+    // BLOCKING — status change + token
+    // ─────────────────────────────────────────
 
     await prisma.call.update({
       where: { id: call.id },
       data: {
         status: "CONNECTED",
-        answeredAt: now,
+        answeredAt: new Date(),
       },
     });
 
-    const displayName =
-      receiver.firstName ?? receiver.username ?? clerkId;
+    const displayName = receiver.firstName ?? receiver.username ?? clerkId;
 
     const { token, serverUrl } = await getLiveKitToken({
       identity: clerkId,
       name: displayName,
       roomName: call.livekitRoomName,
       role: "receiver",
+    });
+
+    // ─────────────────────────────────────────
+    // BACKGROUND — tell the caller their call was accepted
+    // ─────────────────────────────────────────
+
+    after(async () => {
+      try {
+        await publishToInbox(call.callerId, {
+          type: "CALL_ACCEPTED",
+          callId: call.id,
+        });
+      } catch (err) {
+        console.warn("[acceptCallAction.after] notify failed:", err);
+      }
     });
 
     return {

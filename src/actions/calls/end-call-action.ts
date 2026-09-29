@@ -1,6 +1,7 @@
 // src/actions/calls/end-call-action.ts
 "use server";
 
+import { after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import prisma from "@/lib/clients/prisma-client";
@@ -39,6 +40,7 @@ export async function endCallAction(
       return { success: false, error: "Not a participant in this call." };
     }
 
+    // Already finished — no-op
     if (
       call.status === "ENDED" ||
       call.status === "MISSED" ||
@@ -47,6 +49,10 @@ export async function endCallAction(
     ) {
       return { success: true };
     }
+
+    // ─────────────────────────────────────────
+    // BLOCKING — mark the call ENDED
+    // ─────────────────────────────────────────
 
     const now = new Date();
     const durationSeconds = call.answeredAt
@@ -58,22 +64,41 @@ export async function endCallAction(
 
     await prisma.call.update({
       where: { id: call.id },
-      data: { status: "ENDED", endedAt: now, durationSeconds },
+      data: {
+        status: "ENDED",
+        endedAt: now,
+        durationSeconds,
+      },
     });
 
-    await prisma.user.updateMany({
-      where: { id: { in: [call.callerId, call.receiverId] } },
-      data: { totalCalls: { increment: 1 } },
-    });
+    // ─────────────────────────────────────────
+    // BACKGROUND — stats + notification
+    // ─────────────────────────────────────────
 
-    // ⚠️ Internal ids, not clerkIds
-    await publishToInbox(call.callerId, {
-      type: "CALL_ENDED",
-      callId: call.id,
-    });
-    await publishToInbox(call.receiverId, {
-      type: "CALL_ENDED",
-      callId: call.id,
+    after(async () => {
+      try {
+        await prisma.user.updateMany({
+          where: { id: { in: [call.callerId, call.receiverId] } },
+          data: { totalCalls: { increment: 1 } },
+        });
+      } catch (err) {
+        console.warn("[endCallAction.after] stats failed:", err);
+      }
+
+      try {
+        await Promise.allSettled([
+          publishToInbox(call.callerId, {
+            type: "CALL_ENDED",
+            callId: call.id,
+          }),
+          publishToInbox(call.receiverId, {
+            type: "CALL_ENDED",
+            callId: call.id,
+          }),
+        ]);
+      } catch (err) {
+        console.warn("[endCallAction.after] notify failed:", err);
+      }
     });
 
     return { success: true };

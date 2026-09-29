@@ -22,6 +22,7 @@ type InboxEvent =
       callerName: string;
       callerImageUrl: string | null;
     }
+  | { type: "CALL_ACCEPTED"; callId: string }
   | { type: "CALL_ENDED"; callId: string }
   | { type: "CALL_CANCELLED"; callId: string };
 
@@ -52,7 +53,7 @@ export function InboxListener() {
   const onCallPage = pathname?.startsWith("/app/call");
 
   // ─────────────────────────────────────────
-  // Request notification permission (once)
+  // Notification permission
   // ─────────────────────────────────────────
 
   React.useEffect(() => {
@@ -206,6 +207,7 @@ export function InboxListener() {
                 showSystemNotification(call);
               }
             } else if (
+              event.type === "CALL_ACCEPTED" ||
               event.type === "CALL_CANCELLED" ||
               event.type === "CALL_ENDED"
             ) {
@@ -257,7 +259,6 @@ export function InboxListener() {
     setError(null);
     stopRinging();
 
-    // Accept the call FIRST — sets status to CONNECTED in the DB
     const result = await acceptCallAction({ callId: incoming.callId });
 
     if (!result.success) {
@@ -266,17 +267,15 @@ export function InboxListener() {
       return;
     }
 
-    // Then navigate — CallRoom will see status = CONNECTED and skip "incoming"
     router.push(`/app/call/${incoming.callId}`);
   }
 
-  async function handleDecline() {
+  function handleDecline() {
     if (!incoming || processing) return;
     setProcessing(true);
-    setError(null);
     stopRinging();
 
-    await declineCallAction({ callId: incoming.callId });
+    declineCallAction({ callId: incoming.callId }).catch(() => {});
 
     setIncoming(null);
     setProcessing(false);
@@ -293,7 +292,6 @@ export function InboxListener() {
   return (
     <div className="fixed inset-0 z-100 flex items-center justify-center bg-background px-6 text-center">
       <div className="w-full max-w-sm">
-        {/* Pulsing avatar */}
         <div className="relative mx-auto flex size-40 items-center justify-center">
           <span className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
           <span
@@ -324,9 +322,7 @@ export function InboxListener() {
           Incoming VOXA call...
         </p>
 
-        {error && (
-          <p className="mt-4 text-sm text-destructive">{error}</p>
-        )}
+        {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
 
         <div className="mt-12 flex items-center justify-center gap-8">
           <div className="flex flex-col items-center gap-3">

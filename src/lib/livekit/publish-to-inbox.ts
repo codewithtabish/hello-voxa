@@ -29,7 +29,7 @@ function getRoomService(): RoomServiceClient {
 }
 
 // ============================================
-// TYPES
+// MESSAGE TYPES
 // ============================================
 
 export type InboxMessage =
@@ -39,8 +39,18 @@ export type InboxMessage =
       callerName: string;
       callerImageUrl: string | null;
     }
-  | { type: "CALL_ENDED"; callId: string }
-  | { type: "CALL_CANCELLED"; callId: string }
+  | {
+      type: "CALL_ACCEPTED";
+      callId: string;
+    }
+  | {
+      type: "CALL_ENDED";
+      callId: string;
+    }
+  | {
+      type: "CALL_CANCELLED";
+      callId: string;
+    }
   | {
       type: "MESSAGE_NEW";
       conversationId: string;
@@ -49,21 +59,8 @@ export type InboxMessage =
     };
 
 // ============================================
-// PUBLISH TO INBOX
+// PUBLISH
 // ============================================
-//
-// Sends a JSON message to the user's personal
-// inbox room.
-//
-// Signature:
-//   sendData(room, data, kind, options?)
-//
-// kind = RELIABLE  → guaranteed delivery, ordered
-// kind = LOSSY     → may drop, faster (not needed here)
-//
-// If the user isn't connected, LiveKit throws
-// and we silently swallow it.
-//
 
 export async function publishToInbox(
   userId: string,
@@ -76,8 +73,6 @@ export async function publishToInbox(
     const svc = getRoomService();
     await svc.sendData(roomName, payload, DataPacket_Kind.RELIABLE);
   } catch (err: any) {
-    // The room likely doesn't exist because the user isn't connected.
-    // That's OK — no live delivery needed.
     console.warn(
       `[publishToInbox] Failed to deliver ${message.type} to ${userId}:`,
       err?.message,

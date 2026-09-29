@@ -1,6 +1,7 @@
 // src/actions/calls/decline-call-action.ts
 "use server";
 
+import { after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import prisma from "@/lib/clients/prisma-client";
@@ -30,8 +31,8 @@ export async function declineCallAction(
       select: {
         id: true,
         receiverId: true,
-        status: true,
         callerId: true,
+        status: true,
       },
     });
 
@@ -39,9 +40,11 @@ export async function declineCallAction(
     if (call.receiverId !== me.id) {
       return { success: false, error: "Not your call." };
     }
-    if (call.status !== "RINGING") {
-      return { success: true };
-    }
+    if (call.status !== "RINGING") return { success: true };
+
+    // ─────────────────────────────────────────
+    // BLOCKING — one UPDATE
+    // ─────────────────────────────────────────
 
     await prisma.call.update({
       where: { id: call.id },
@@ -52,10 +55,19 @@ export async function declineCallAction(
       },
     });
 
-    // ⚠️ Internal id, not clerkId
-    await publishToInbox(call.callerId, {
-      type: "CALL_CANCELLED",
-      callId: call.id,
+    // ─────────────────────────────────────────
+    // BACKGROUND — tell caller their call was declined
+    // ─────────────────────────────────────────
+
+    after(async () => {
+      try {
+        await publishToInbox(call.callerId, {
+          type: "CALL_CANCELLED",
+          callId: call.id,
+        });
+      } catch (err) {
+        console.warn("[declineCallAction.after] notify failed:", err);
+      }
     });
 
     return { success: true };

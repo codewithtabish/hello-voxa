@@ -1,10 +1,12 @@
 // src/actions/calls/initiate-call-action.ts
 "use server";
 
+import { randomUUID } from "crypto";
+import { after } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 import prisma from "@/lib/clients/prisma-client";
-import { findOrCreateConversation } from "@/lib/conversation/find-or-create";
+import { canonicalPair } from "@/lib/conversation/canonical";
 import { getLiveKitToken } from "@/lib/livekit/token";
 import { publishToInbox } from "@/lib/livekit/publish-to-inbox";
 import { sendPushToUser } from "@/lib/push/send-push";
@@ -28,6 +30,10 @@ export async function initiateCallAction(
   input: InitiateCallInput,
 ): Promise<InitiateCallResult> {
   try {
+    // ─────────────────────────────────────────
+    // BLOCKING — only what the client needs
+    // ─────────────────────────────────────────
+
     const { userId: callerClerkId } = await auth();
     if (!callerClerkId) return { success: false, error: "Not authenticated." };
 
@@ -39,11 +45,16 @@ export async function initiateCallAction(
     const [caller, receiver] = await Promise.all([
       prisma.user.findUnique({
         where: { clerkId: callerClerkId },
-        select: { id: true, firstName: true, username: true, imageUrl: true },
+        select: {
+          id: true,
+          firstName: true,
+          username: true,
+          imageUrl: true,
+        },
       }),
       prisma.user.findUnique({
         where: { id: receiverInternalId },
-        select: { id: true, clerkId: true, firstName: true, username: true },
+        select: { id: true, clerkId: true },
       }),
     ]);
 
@@ -53,10 +64,16 @@ export async function initiateCallAction(
       return { success: false, error: "You cannot call yourself." };
     }
 
-    const conversation = await findOrCreateConversation(
-      caller.id,
-      receiver.id,
-    );
+    const { userAId, userBId } = canonicalPair(caller.id, receiver.id);
+
+    const conversation = await prisma.conversation.upsert({
+      where: { userAId_userBId: { userAId, userBId } },
+      create: { userAId, userBId, status: "ACTIVE" },
+      update: {},
+      select: { id: true },
+    });
+
+    const livekitRoomName = `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
 
     const call = await prisma.call.create({
       data: {
@@ -64,16 +81,10 @@ export async function initiateCallAction(
         callerId: caller.id,
         receiverId: receiver.id,
         status: "RINGING",
-        livekitRoomName: "",
+        livekitRoomName,
         initiatedAt: new Date(),
       },
-    });
-
-    const livekitRoomName = `call_${call.id}`;
-
-    await prisma.call.update({
-      where: { id: call.id },
-      data: { livekitRoomName },
+      select: { id: true },
     });
 
     const displayName =
@@ -87,27 +98,38 @@ export async function initiateCallAction(
     });
 
     // ─────────────────────────────────────────
-    // 1. LiveKit data channel (instant, tab open)
+    // BACKGROUND — runs AFTER response is sent
     // ─────────────────────────────────────────
+    //
+    // `after()` tells Next.js: "don't cut this off
+    // when the response returns". The user never
+    // waits for these.
 
-    await publishToInbox(receiver.id, {
-      type: "CALL_INCOMING",
-      callId: call.id,
-      callerName: displayName,
-      callerImageUrl: caller.imageUrl ?? null,
+    after(async () => {
+      try {
+        await Promise.allSettled([
+          publishToInbox(receiver.id, {
+            type: "CALL_INCOMING",
+            callId: call.id,
+            callerName: displayName,
+            callerImageUrl: caller.imageUrl ?? null,
+          }),
+          sendPushToUser(receiver.id, {
+            title: "Incoming VOXA call",
+            body: `${displayName} is calling...`,
+            callId: call.id,
+            callerImageUrl: caller.imageUrl ?? null,
+            url: `/app/call/${call.id}`,
+          }),
+        ]);
+      } catch (err) {
+        console.warn("[initiateCallAction.after] notify failed:", err);
+      }
     });
 
     // ─────────────────────────────────────────
-    // 2. Web Push (works even if browser is closed)
+    // RETURN — user gets this in ~250ms
     // ─────────────────────────────────────────
-
-    await sendPushToUser(receiver.id, {
-      title: "Incoming VOXA call",
-      body: `${displayName} is calling...`,
-      callId: call.id,
-      callerImageUrl: caller.imageUrl ?? null,
-      url: `/app/call/${call.id}`,
-    });
 
     return {
       success: true,
