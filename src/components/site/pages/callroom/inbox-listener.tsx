@@ -32,6 +32,8 @@ type IncomingCall = {
   callerImageUrl: string | null;
 };
 
+type PendingAction = "accept" | "decline" | null;
+
 // ============================================
 // INBOX LISTENER
 // ============================================
@@ -41,7 +43,7 @@ export function InboxListener() {
   const pathname = usePathname();
 
   const [incoming, setIncoming] = React.useState<IncomingCall | null>(null);
-  const [processing, setProcessing] = React.useState(false);
+  const [pendingAction, setPendingAction] = React.useState<PendingAction>(null);
   const [tabVisible, setTabVisible] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -202,6 +204,7 @@ export function InboxListener() {
 
               setIncoming(call);
               setError(null);
+              setPendingAction(null);
 
               if (document.visibilityState === "hidden") {
                 showSystemNotification(call);
@@ -214,6 +217,7 @@ export function InboxListener() {
               setIncoming((prev) =>
                 prev && prev.callId === event.callId ? null : prev,
               );
+              setPendingAction(null);
             }
           } catch (err) {
             console.error("[InboxListener] parse error:", err);
@@ -250,12 +254,26 @@ export function InboxListener() {
   }, [incoming?.callId]);
 
   // ─────────────────────────────────────────
-  // Actions
+  // Haptics helper
+  // ─────────────────────────────────────────
+
+  function haptic(pattern: number | number[]) {
+    try {
+      if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+        navigator.vibrate(pattern);
+      }
+    } catch {}
+  }
+
+  // ─────────────────────────────────────────
+  // Accept — await token, then navigate
   // ─────────────────────────────────────────
 
   async function handleAccept() {
-    if (!incoming || processing) return;
-    setProcessing(true);
+    if (!incoming || pendingAction) return;
+
+    haptic(50); // light tap feedback
+    setPendingAction("accept");
     setError(null);
     stopRinging();
 
@@ -263,22 +281,28 @@ export function InboxListener() {
 
     if (!result.success) {
       setError(result.error);
-      setProcessing(false);
+      setPendingAction(null);
       return;
     }
 
     router.push(`/app/call/${incoming.callId}`);
   }
 
+  // ─────────────────────────────────────────
+  // Decline — fire and forget, instant
+  // ─────────────────────────────────────────
+
   function handleDecline() {
-    if (!incoming || processing) return;
-    setProcessing(true);
+    if (!incoming || pendingAction) return;
+
+    haptic(50);
     stopRinging();
 
+    // Fire-and-forget — UI dismisses immediately
     declineCallAction({ callId: incoming.callId }).catch(() => {});
 
     setIncoming(null);
-    setProcessing(false);
+    setPendingAction(null);
   }
 
   // ─────────────────────────────────────────
@@ -288,10 +312,12 @@ export function InboxListener() {
   if (!incoming || onCallPage || !tabVisible) return null;
 
   const initial = incoming.callerName.charAt(0).toUpperCase();
+  const accepting = pendingAction === "accept";
 
   return (
     <div className="fixed inset-0 z-100 flex items-center justify-center bg-background px-6 text-center">
       <div className="w-full max-w-sm">
+        {/* Pulsing avatar */}
         <div className="relative mx-auto flex size-40 items-center justify-center">
           <span className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
           <span
@@ -315,6 +341,7 @@ export function InboxListener() {
           </div>
         </div>
 
+        {/* Name + status */}
         <h2 className="mt-8 text-3xl font-semibold text-foreground">
           {incoming.callerName}
         </h2>
@@ -324,52 +351,53 @@ export function InboxListener() {
 
         {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
 
+        {/* Buttons */}
         <div className="mt-12 flex items-center justify-center gap-8">
+          {/* Decline — always shows icon, never a spinner */}
           <div className="flex flex-col items-center gap-3">
             <button
               type="button"
               onClick={handleDecline}
-              disabled={processing}
+              disabled={accepting}
               className={cn(
                 "flex size-16 items-center justify-center rounded-full",
                 "bg-destructive text-white shadow-lg shadow-destructive/30",
-                "transition-transform hover:scale-105 active:scale-95",
-                processing && "cursor-not-allowed opacity-60",
+                "transition-transform active:scale-95",
+                "hover:scale-105",
+                accepting && "cursor-not-allowed opacity-40",
               )}
               aria-label="Decline call"
             >
-              {processing ? (
-                <Loader2 className="size-6 animate-spin" />
-              ) : (
-                <PhoneOff className="size-6" strokeWidth={2.5} />
-              )}
+              <PhoneOff className="size-6" strokeWidth={2.5} />
             </button>
             <span className="text-xs font-medium text-muted-foreground">
               Decline
             </span>
           </div>
 
+          {/* Accept — shows spinner only on itself while connecting */}
           <div className="flex flex-col items-center gap-3">
             <button
               type="button"
               onClick={handleAccept}
-              disabled={processing}
+              disabled={accepting}
               className={cn(
                 "flex size-16 items-center justify-center rounded-full",
                 "bg-green-500 text-white shadow-lg shadow-green-500/30",
-                "transition-transform hover:scale-105 active:scale-95",
-                processing && "cursor-not-allowed opacity-60",
+                "transition-transform active:scale-95",
+                "hover:scale-105",
+                accepting && "cursor-wait",
               )}
               aria-label="Accept call"
             >
-              {processing ? (
+              {accepting ? (
                 <Loader2 className="size-6 animate-spin" />
               ) : (
                 <Phone className="size-6" strokeWidth={2.5} />
               )}
             </button>
             <span className="text-xs font-medium text-muted-foreground">
-              Accept
+              {accepting ? "Connecting..." : "Accept"}
             </span>
           </div>
         </div>
