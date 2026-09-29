@@ -43,9 +43,10 @@ export function ChatRoom({
   const [input, setInput] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
 
-  const bottomRef = React.useRef<HTMLDivElement | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const conversationIdRef = React.useRef<string | null>(initialConversationId);
 
+  // Keep ref in sync so realtime handler sees latest
   React.useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
@@ -55,8 +56,12 @@ export function ChatRoom({
     otherUser.username ||
     "User";
 
-  const fetchMessages = React.useCallback(async () => {
-    const id = conversationIdRef.current;
+  // ─────────────────────────────────────────
+  // Fetch messages
+  // ─────────────────────────────────────────
+
+  const fetchMessages = React.useCallback(async (overrideId?: string) => {
+    const id = overrideId ?? conversationIdRef.current;
     if (!id) {
       setMessages([]);
       setLoading(false);
@@ -80,15 +85,48 @@ export function ChatRoom({
     fetchMessages();
   }, [fetchMessages]);
 
-  React.useEffect(() => {
-    return onChatMessage((id) => {
-      if (id === conversationIdRef.current) fetchMessages();
-    });
-  }, [fetchMessages]);
+  // ─────────────────────────────────────────
+  // ⚡ Realtime — match by conversationId OR senderId
+  // ─────────────────────────────────────────
+  //
+  // If we already know the conversation → match by conversation id.
+  // If we DON'T know it yet (opened chat with a user who hasn't
+  // messaged us before) → match by senderId === otherUser.id.
+  // That's exactly the person we're chatting with, so adopt their id.
 
   React.useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    return onChatMessage((evt) => {
+      const currentConvId = conversationIdRef.current;
+
+      // Case 1: we already have a conversation id — just match it
+      if (currentConvId && evt.conversationId === currentConvId) {
+        fetchMessages();
+        return;
+      }
+
+      // Case 2: no conversation id yet, but the sender is our chat partner
+      if (!currentConvId && evt.senderId === otherUser.id) {
+        setConversationId(evt.conversationId);
+        conversationIdRef.current = evt.conversationId;
+        fetchMessages(evt.conversationId);
+      }
+    });
+  }, [fetchMessages, otherUser.id]);
+
+  // ─────────────────────────────────────────
+  // Reliable scroll to bottom — set scrollTop directly
+  // ─────────────────────────────────────────
+
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Only scroll if we're near the bottom, or if it's our own new message
+    el.scrollTop = el.scrollHeight;
   }, [messages.length]);
+
+  // ─────────────────────────────────────────
+  // Send
+  // ─────────────────────────────────────────
 
   async function handleSend() {
     const text = input.trim();
@@ -141,14 +179,12 @@ export function ChatRoom({
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
-      {/* ─────────────────────────────────
-          CHAT HEADER — sticky at top
-         ───────────────────────────────── */}
-      <header className="flex shrink-0 items-center gap-3 border-b border-border bg-background/95 px-3 py-2.5 backdrop-blur-md">
+      {/* Header */}
+      <header className="flex shrink-0 items-center gap-3 border-b border-border bg-background px-3 py-2.5">
         <button
           type="button"
           onClick={() => router.push("/app/messages")}
-          className="flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted"
+          className="flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-muted"
           aria-label="Back"
         >
           <ArrowLeft className="size-5" />
@@ -170,10 +206,11 @@ export function ChatRoom({
         <h1 className="truncate text-sm font-semibold">{displayName}</h1>
       </header>
 
-      {/* ─────────────────────────────────
-          MESSAGES AREA
-         ───────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Messages scroll area */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto overscroll-contain"
+      >
         <div className="mx-auto w-full max-w-2xl px-3 py-4">
           {loading ? (
             <MessageSkeleton />
@@ -197,7 +234,7 @@ export function ChatRoom({
                   >
                     <div
                       className={cn(
-                        "relative max-w-[75%] rounded-2xl px-3.5 py-2 text-sm shadow-sm",
+                        "relative max-w-[78%] rounded-2xl px-3.5 py-2 text-sm",
                         isMine
                           ? "bg-primary text-primary-foreground"
                           : "bg-card text-foreground border border-border",
@@ -220,24 +257,19 @@ export function ChatRoom({
                   </div>
                 );
               })}
-              <div ref={bottomRef} />
             </div>
           )}
         </div>
       </div>
 
-      {/* ─────────────────────────────────
-          ERROR BAR
-         ───────────────────────────────── */}
+      {/* Error */}
       {error && (
         <div className="shrink-0 border-t border-border bg-destructive/5 px-3 py-2 text-center text-xs text-destructive">
           {error}
         </div>
       )}
 
-      {/* ─────────────────────────────────
-          INPUT BAR
-         ───────────────────────────────── */}
+      {/* Input */}
       <div className="shrink-0 border-t border-border bg-background px-3 py-2.5">
         <div className="mx-auto flex w-full max-w-2xl items-end gap-2">
           <textarea

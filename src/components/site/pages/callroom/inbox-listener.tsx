@@ -198,7 +198,10 @@ export function InboxListener() {
               );
               setPendingAction(null);
             } else if (event.type === "MESSAGE_NEW") {
-              emitChatMessage(event.conversationId);
+              emitChatMessage({
+                conversationId: event.conversationId,
+                senderId: event.senderId,
+              });
             }
           } catch (err) {
             console.error("[InboxListener] parse error:", err);
