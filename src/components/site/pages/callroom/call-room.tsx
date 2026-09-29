@@ -10,8 +10,8 @@ import {
   LocalAudioTrack,
   RemoteAudioTrack,
   createLocalAudioTrack,
-  AudioPresets,
   ConnectionState,
+  AudioPresets,
 } from "livekit-client";
 import {
   Mic,
@@ -40,27 +40,43 @@ type CallRoomProps = {
 };
 
 type CallState =
-  | "incoming"       // receiver waiting for Accept
-  | "connecting"     // connecting to LiveKit
-  | "ringing"        // caller waiting for receiver to join
-  | "connected"      // both parties in the call
-  | "reconnecting"   // network dropped, LiveKit is retrying
-  | "ended";         // call finished
+  | "incoming"
+  | "connecting"
+  | "ringing"
+  | "connected"
+  | "reconnecting"
+  | "ended";
 
 // ============================================
-// AUDIO CONFIG — voice-optimized
+// HIGH-FIDELITY AUDIO CONFIG
 // ============================================
+//
+// These settings maximize voice quality:
+//
+//   echoCancellation : cancels speaker feedback
+//   noiseSuppression : removes background noise
+//   autoGainControl  : normalizes level (no clipping)
+//   sampleRate: 48000 : full-band voice (up to 24kHz freq)
+//   channelCount: 1   : mono is ideal for voice clarity
+//
+// The `AudioPresets.speech` (24kbps) is the industry
+// standard for crystal-clear voice communication.
+//
 
 const AUDIO_CAPTURE_OPTIONS = {
   echoCancellation: true,
   noiseSuppression: true,
   autoGainControl: true,
+  sampleRate: 48000,
+  channelCount: 1,
+  voiceIsolation: true, // Stronger noise suppression (if supported)
 } as const;
 
-const REMOTE_AUDIO_VOLUME = 0.8; // 80% — reduces feedback loops
+// Remote audio at 100% for maximum clarity
+const REMOTE_AUDIO_VOLUME = 1.0;
 
 // ============================================
-// CALL ROOM
+// CALL ROOM COMPONENT
 // ============================================
 
 export function CallRoom({ call, myRole }: CallRoomProps) {
@@ -86,6 +102,7 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
   const audioTrackRef = React.useRef<LocalAudioTrack | null>(null);
   const audioElRef = React.useRef<HTMLAudioElement | null>(null);
   const remoteTracksRef = React.useRef<Map<string, RemoteAudioTrack>>(new Map());
+  const connectAttemptedRef = React.useRef(false); // Prevents double-connect
 
   const otherName =
     myRole === "caller" ? call.receiverName : call.callerName;
@@ -113,7 +130,7 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
   }, [state, call.answeredAt]);
 
   // ─────────────────────────────────────────
-  // Set remote audio volume once on mount
+  // Volume control
   // ─────────────────────────────────────────
 
   React.useEffect(() => {
@@ -127,13 +144,14 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
   // ─────────────────────────────────────────
 
   React.useEffect(() => {
-    if (state !== "connecting") return;
+    // Guard: only connect once per "connecting" state transition
+    if (state !== "connecting" || connectAttemptedRef.current) return;
+    connectAttemptedRef.current = true;
 
     let cancelled = false;
 
     async function connect() {
       try {
-        // ── Get token ──
         let token: string;
         let serverUrl: string;
 
@@ -157,17 +175,16 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
 
         if (cancelled) return;
 
-        // ── Create room with audio-optimized settings ──
+        // ── Create room with max-quality settings ──
         const room = new Room({
-          adaptiveStream: false,     // no video, no need
-          dynacast: false,           // no video, no need
+          adaptiveStream: false,
+          dynacast: false,
           audioCaptureDefaults: AUDIO_CAPTURE_OPTIONS,
-          // Voice-optimized publishing
           publishDefaults: {
-            audioPreset: AudioPresets.speech, // 24 kbps voice
-            dtx: true,                        // silence suppression
-            red: true,                        // packet-loss resilience
-            stopMicTrackOnMute: false,        // keep mic warm on mute
+            audioPreset: AudioPresets.speech, // 24kbps, mono, optimized for voice
+            dtx: true,                         // Silence suppression
+            red: true,                         // Packet-loss resilience
+            stopMicTrackOnMute: false,         // Keep mic warm for instant unmute
           },
         });
 
@@ -183,13 +200,13 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           try {
             await endCallAction({ callId: call.id });
           } catch {
-            // ignore — likely already ended
+            // ignore
           }
           setState("ended");
           setTimeout(() => router.replace("/app"), 1500);
         });
 
-        // ── Remote audio arrived ──
+        // ── Remote audio ──
         room.on(RoomEvent.TrackSubscribed, (track) => {
           if (track.kind === Track.Kind.Audio) {
             const remoteTrack = track as RemoteAudioTrack;
@@ -204,7 +221,6 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           }
         });
 
-        // ── Remote audio removed ──
         room.on(RoomEvent.TrackUnsubscribed, (track) => {
           if (track.kind === Track.Kind.Audio) {
             remoteTracksRef.current.delete(track.sid ?? "");
@@ -221,18 +237,9 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           }
         });
 
-        room.on(RoomEvent.Reconnecting, () => {
-          setState("reconnecting");
-        });
-
-        room.on(RoomEvent.Reconnected, () => {
-          setState("connected");
-        });
-
-        // ── Room disconnected ──
-        room.on(RoomEvent.Disconnected, () => {
-          setState("ended");
-        });
+        room.on(RoomEvent.Reconnecting, () => setState("reconnecting"));
+        room.on(RoomEvent.Reconnected, () => setState("connected"));
+        room.on(RoomEvent.Disconnected, () => setState("ended"));
 
         // ── Join ──
         await room.connect(serverUrl, token);
@@ -242,7 +249,7 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           return;
         }
 
-        // ── Publish mic ──
+        // ── Publish mic with max quality ──
         try {
           const track = await createLocalAudioTrack(AUDIO_CAPTURE_OPTIONS);
 
@@ -252,9 +259,11 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
               echoCancellation: { ideal: true },
               noiseSuppression: { ideal: true },
               autoGainControl: { ideal: true },
+              sampleRate: { ideal: 48000 },
+              channelCount: { ideal: 1 },
             });
           } catch {
-            // Non-fatal — browser may not support all constraints
+            // Non-fatal
           }
 
           audioTrackRef.current = track;
@@ -270,7 +279,6 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
         } catch (micErr: any) {
           console.warn("[CallRoom] mic unavailable:", micErr?.message);
           setMicAvailable(false);
-          // Continue without mic — user can still hear the other side
         }
 
         // ── Decide state ──
@@ -481,7 +489,6 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
       />
 
       <div className="flex flex-1 flex-col items-center justify-center px-6">
-        {/* Avatar with animations */}
         <div className="relative">
           {(state === "ringing" ||
             state === "connecting" ||
@@ -540,9 +547,7 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
         )}
       </div>
 
-      {/* Controls */}
       <div className="flex items-center justify-center gap-6 pb-12">
-        {/* Mic */}
         <button
           type="button"
           onClick={toggleMute}
@@ -561,7 +566,6 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           {muted ? <MicOff className="size-5" /> : <Mic className="size-5" />}
         </button>
 
-        {/* Speaker */}
         <button
           type="button"
           onClick={toggleSpeaker}
@@ -584,7 +588,6 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           )}
         </button>
 
-        {/* Hang up */}
         <button
           type="button"
           onClick={hangUp}

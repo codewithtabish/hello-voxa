@@ -23,7 +23,7 @@ export default function HomePage() {
   const { isSignedIn, isLoaded } = useUser();
 
   return (
-    <div className="relative flex min-h-[calc(100dvh-4rem)] flex-col">
+    <div className="relative flex min-h-[calc(100dvh-4rem)] flex-col ">
       {/* ────────────────────────────────────
           HERO
          ──────────────────────────────────── */}
