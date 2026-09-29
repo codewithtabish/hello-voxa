@@ -1,5 +1,4 @@
 // src/app/(marketing)/page.tsx
-// (or wherever your homepage lives)
 
 "use client";
 
@@ -9,44 +8,12 @@ import { SignUpButton, SignInButton, useUser } from "@clerk/nextjs";
 import {
   Mic,
   ArrowRight,
-  Users,
   Sparkles,
   Radio,
   MessagesSquare,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-
-// ============================================
-// CLERK MODAL APPEARANCE
-// ============================================
-
-const clerkAppearance = {
-  variables: {
-    colorPrimary: "hsl(var(--primary))",
-    colorBackground: "hsl(var(--background))",
-    colorText: "hsl(var(--foreground))",
-    colorTextSecondary: "hsl(var(--muted-foreground))",
-    colorInputBackground: "hsl(var(--background))",
-    colorInputText: "hsl(var(--foreground))",
-    borderRadius: "0.9rem",
-  },
-  elements: {
-    modalBackdrop: "bg-background/70 backdrop-blur-md",
-    modalContent: "bg-background border border-border shadow-2xl",
-    card: "bg-transparent shadow-none",
-    headerTitle: "text-foreground font-bold",
-    headerSubtitle: "text-muted-foreground",
-    formButtonPrimary:
-      "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:opacity-90",
-    formFieldInput:
-      "bg-muted/40 border-border/60 focus:border-primary/40 focus:ring-primary/20",
-    footerActionLink: "text-primary hover:text-primary/80",
-    formFieldLabel: "text-foreground",
-    dividerLine: "bg-border/60",
-    dividerText: "text-muted-foreground",
-  },
-};
 
 // ============================================
 // HOMEPAGE
@@ -104,7 +71,7 @@ export default function HomePage() {
               </Link>
             ) : (
               <>
-                <SignUpButton mode="modal" appearance={clerkAppearance}>
+                <SignUpButton mode="modal">
                   <button
                     type="button"
                     className={cn(
@@ -119,7 +86,7 @@ export default function HomePage() {
                   </button>
                 </SignUpButton>
 
-                <SignInButton mode="modal" appearance={clerkAppearance}>
+                <SignInButton mode="modal">
                   <button
                     type="button"
                     className={cn(
