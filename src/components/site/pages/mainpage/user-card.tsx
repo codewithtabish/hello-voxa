@@ -2,8 +2,8 @@
 "use client";
 
 import * as React from "react";
-import { useRouter, usePathname } from "next/navigation";
-import { Phone, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Phone, MessageCircle, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { UserListItem } from "@/actions/users/list-users-action";
@@ -11,36 +11,9 @@ import { initiateCallAction } from "@/actions/calls/initiate-call-action";
 
 export function UserCard({ user }: { user: UserListItem }) {
   const router = useRouter();
-  const pathname = usePathname();
 
   const [calling, setCalling] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-
-  // ─────────────────────────────────────────
-  // Reset button state whenever we navigate
-  // back to this page (e.g., after a call ends)
-  // ─────────────────────────────────────────
-
-  React.useEffect(() => {
-    setCalling(false);
-    setError(null);
-  }, [pathname]);
-
-  // ─────────────────────────────────────────
-  // Reset when the tab regains focus too
-  // ─────────────────────────────────────────
-
-  React.useEffect(() => {
-    function reset() {
-      setCalling(false);
-      setError(null);
-    }
-
-    window.addEventListener("focus", reset);
-    return () => {
-      window.removeEventListener("focus", reset);
-    };
-  }, []);
 
   const name =
     [user.firstName, user.lastName].filter(Boolean).join(" ") ||
@@ -67,10 +40,14 @@ export function UserCard({ user }: { user: UserListItem }) {
     router.push(`/app/call/${result.callId}`);
   }
 
+  // ⚡ Instant navigation — no state, no spinner, no wait
+  function handleMessage() {
+    router.push(`/app/messages/with/${user.id}`);
+  }
+
   return (
     <li className="rounded-2xl border border-border bg-card p-4">
       <div className="flex items-start gap-4">
-        {/* Avatar */}
         <div className="relative shrink-0">
           {user.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -90,11 +67,9 @@ export function UserCard({ user }: { user: UserListItem }) {
               "absolute -right-0.5 -bottom-0.5 size-3.5 rounded-full border-2 border-card",
               isAvailable ? "bg-green-500" : "bg-muted-foreground/40",
             )}
-            aria-label={isAvailable ? "Available" : "Not available"}
           />
         </div>
 
-        {/* Info */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <h3 className="truncate text-sm font-semibold">{name}</h3>
@@ -149,13 +124,12 @@ export function UserCard({ user }: { user: UserListItem }) {
             </p>
           )}
 
-          {/* Error */}
           {error && (
             <p className="mt-2 text-xs text-destructive">{error}</p>
           )}
 
-          {/* Connect button */}
-          <div className="mt-3">
+          <div className="mt-3 flex items-center gap-2">
+            {/* Connect — needs spinner (real server work happens) */}
             <button
               type="button"
               onClick={handleConnect}
@@ -171,7 +145,7 @@ export function UserCard({ user }: { user: UserListItem }) {
               {calling ? (
                 <>
                   <Loader2 className="size-3.5 animate-spin" />
-                  Starting...
+                  Connecting...
                 </>
               ) : (
                 <>
@@ -179,6 +153,20 @@ export function UserCard({ user }: { user: UserListItem }) {
                   Connect
                 </>
               )}
+            </button>
+
+            {/* Message — no state, instant */}
+            <button
+              type="button"
+              onClick={handleMessage}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5",
+                "border border-border bg-background text-xs font-semibold",
+                "text-foreground transition-colors hover:bg-muted",
+              )}
+            >
+              <MessageCircle className="size-3.5" />
+              Message
             </button>
           </div>
         </div>

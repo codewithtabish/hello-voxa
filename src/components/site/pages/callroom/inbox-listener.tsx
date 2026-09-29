@@ -10,10 +10,7 @@ import { cn } from "@/lib/utils";
 import { getInboxTokenAction } from "@/actions/livekit/get-inbox-token-action";
 import { acceptCallAction } from "@/actions/calls/accept-call-action";
 import { declineCallAction } from "@/actions/calls/decline-call-action";
-
-// ============================================
-// TYPES
-// ============================================
+import { emitChatMessage } from "@/lib/chat/chat-events";
 
 type InboxEvent =
   | {
@@ -24,7 +21,13 @@ type InboxEvent =
     }
   | { type: "CALL_ACCEPTED"; callId: string }
   | { type: "CALL_ENDED"; callId: string }
-  | { type: "CALL_CANCELLED"; callId: string };
+  | { type: "CALL_CANCELLED"; callId: string }
+  | {
+      type: "MESSAGE_NEW";
+      conversationId: string;
+      senderId: string;
+      preview: string;
+    };
 
 type IncomingCall = {
   callId: string;
@@ -33,10 +36,6 @@ type IncomingCall = {
 };
 
 type PendingAction = "accept" | "decline" | null;
-
-// ============================================
-// INBOX LISTENER
-// ============================================
 
 export function InboxListener() {
   const router = useRouter();
@@ -54,10 +53,6 @@ export function InboxListener() {
 
   const onCallPage = pathname?.startsWith("/app/call");
 
-  // ─────────────────────────────────────────
-  // Notification permission
-  // ─────────────────────────────────────────
-
   React.useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("Notification" in window)) return;
@@ -70,10 +65,6 @@ export function InboxListener() {
     }
   }, []);
 
-  // ─────────────────────────────────────────
-  // Track tab visibility
-  // ─────────────────────────────────────────
-
   React.useEffect(() => {
     if (typeof document === "undefined") return;
 
@@ -85,10 +76,6 @@ export function InboxListener() {
     document.addEventListener("visibilitychange", update);
     return () => document.removeEventListener("visibilitychange", update);
   }, []);
-
-  // ─────────────────────────────────────────
-  // Ringtone + vibration
-  // ─────────────────────────────────────────
 
   function startRinging() {
     try {
@@ -134,10 +121,6 @@ export function InboxListener() {
     } catch {}
   }
 
-  // ─────────────────────────────────────────
-  // OS notification
-  // ─────────────────────────────────────────
-
   function showSystemNotification(call: IncomingCall) {
     if (typeof window === "undefined") return;
     if (!("Notification" in window)) return;
@@ -170,10 +153,6 @@ export function InboxListener() {
       console.warn("[InboxListener] notification error:", err);
     }
   }
-
-  // ─────────────────────────────────────────
-  // Connect to inbox
-  // ─────────────────────────────────────────
 
   React.useEffect(() => {
     let cancelled = false;
@@ -218,6 +197,8 @@ export function InboxListener() {
                 prev && prev.callId === event.callId ? null : prev,
               );
               setPendingAction(null);
+            } else if (event.type === "MESSAGE_NEW") {
+              emitChatMessage(event.conversationId);
             }
           } catch (err) {
             console.error("[InboxListener] parse error:", err);
@@ -240,10 +221,6 @@ export function InboxListener() {
     };
   }, []);
 
-  // ─────────────────────────────────────────
-  // React to incoming changes
-  // ─────────────────────────────────────────
-
   React.useEffect(() => {
     if (incoming) {
       startRinging();
@@ -253,10 +230,6 @@ export function InboxListener() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming?.callId]);
 
-  // ─────────────────────────────────────────
-  // Haptics helper
-  // ─────────────────────────────────────────
-
   function haptic(pattern: number | number[]) {
     try {
       if (typeof navigator !== "undefined" && "vibrate" in navigator) {
@@ -265,14 +238,10 @@ export function InboxListener() {
     } catch {}
   }
 
-  // ─────────────────────────────────────────
-  // Accept — await token, then navigate
-  // ─────────────────────────────────────────
-
   async function handleAccept() {
     if (!incoming || pendingAction) return;
 
-    haptic(50); // light tap feedback
+    haptic(50);
     setPendingAction("accept");
     setError(null);
     stopRinging();
@@ -288,26 +257,17 @@ export function InboxListener() {
     router.push(`/app/call/${incoming.callId}`);
   }
 
-  // ─────────────────────────────────────────
-  // Decline — fire and forget, instant
-  // ─────────────────────────────────────────
-
   function handleDecline() {
     if (!incoming || pendingAction) return;
 
     haptic(50);
     stopRinging();
 
-    // Fire-and-forget — UI dismisses immediately
     declineCallAction({ callId: incoming.callId }).catch(() => {});
 
     setIncoming(null);
     setPendingAction(null);
   }
-
-  // ─────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────
 
   if (!incoming || onCallPage || !tabVisible) return null;
 
@@ -317,7 +277,6 @@ export function InboxListener() {
   return (
     <div className="fixed inset-0 z-100 flex items-center justify-center bg-background px-6 text-center">
       <div className="w-full max-w-sm">
-        {/* Pulsing avatar */}
         <div className="relative mx-auto flex size-40 items-center justify-center">
           <span className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
           <span
@@ -341,7 +300,6 @@ export function InboxListener() {
           </div>
         </div>
 
-        {/* Name + status */}
         <h2 className="mt-8 text-3xl font-semibold text-foreground">
           {incoming.callerName}
         </h2>
@@ -351,9 +309,7 @@ export function InboxListener() {
 
         {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
 
-        {/* Buttons */}
         <div className="mt-12 flex items-center justify-center gap-8">
-          {/* Decline — always shows icon, never a spinner */}
           <div className="flex flex-col items-center gap-3">
             <button
               type="button"
@@ -375,7 +331,6 @@ export function InboxListener() {
             </span>
           </div>
 
-          {/* Accept — shows spinner only on itself while connecting */}
           <div className="flex flex-col items-center gap-3">
             <button
               type="button"

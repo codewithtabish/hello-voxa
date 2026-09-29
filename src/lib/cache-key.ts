@@ -4,18 +4,23 @@
 // Used with `use cache` + `revalidateTag`
 // ============================================
 
+import { revalidateTag, revalidatePath } from "next/cache";
+
+// ============================================
+// TAGS
+// ============================================
+
 export const CACHE_TAGS = {
   singleUser: "singleUser",
   users: "users",
+  chat: "chat",
 } as const;
 
 export type CacheTag = (typeof CACHE_TAGS)[keyof typeof CACHE_TAGS];
 
 // ============================================
-// REVALIDATE HELPERS
+// USER HELPERS
 // ============================================
-
-import { revalidateTag, revalidatePath } from "next/cache";
 
 /**
  * Revalidate ONE user's data + the bulk users list.
@@ -37,4 +42,22 @@ export function revalidateUsers() {
   revalidateTag(CACHE_TAGS.users, { expire: 0 });
   revalidatePath("/app");
   revalidatePath("/app", "layout");
+}
+
+// ============================================
+// CHAT HELPERS
+// ============================================
+
+/**
+ * Revalidate ALL chat data.
+ * Call after:
+ *   - A new message is sent
+ *   - A message is deleted
+ *   - A message is edited
+ *   - A conversation is created
+ */
+export function revalidateChat() {
+  revalidateTag(CACHE_TAGS.chat, { expire: 0 });
+  revalidatePath("/app/messages");
+  revalidatePath("/app/messages", "layout");
 }
