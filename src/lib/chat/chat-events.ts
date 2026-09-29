@@ -7,9 +7,17 @@ export type ChatMessageEvent = {
   senderId: string;
 };
 
-export function emitChatMessage(event: ChatMessageEvent) {
+type EmitPayload = string | ChatMessageEvent;
+
+export function emitChatMessage(payload: EmitPayload) {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: event }));
+
+  const detail: ChatMessageEvent =
+    typeof payload === "string"
+      ? { conversationId: payload, senderId: "" }
+      : payload;
+
+  window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail }));
 }
 
 export function onChatMessage(

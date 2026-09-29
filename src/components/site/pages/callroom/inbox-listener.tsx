@@ -198,6 +198,10 @@ export function InboxListener() {
               );
               setPendingAction(null);
             } else if (event.type === "MESSAGE_NEW") {
+              console.log("[InboxListener] MESSAGE_NEW received", {
+                conversationId: event.conversationId,
+                senderId: event.senderId,
+              });
               emitChatMessage({
                 conversationId: event.conversationId,
                 senderId: event.senderId,
@@ -208,7 +212,12 @@ export function InboxListener() {
           }
         });
 
+        room.on(RoomEvent.Disconnected, () => {
+          console.warn("[InboxListener] disconnected");
+        });
+
         await room.connect(result.serverUrl, result.token);
+        console.log("[InboxListener] connected to inbox");
       } catch (err: any) {
         console.error("[InboxListener] connect error:", err?.message);
       }
