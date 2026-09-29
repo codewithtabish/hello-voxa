@@ -1,4 +1,3 @@
-// src/components/app/screens/call/call-room.tsx
 "use client";
 
 import * as React from "react";
@@ -24,6 +23,7 @@ import {
 
 import { cn } from "@/lib/utils";
 import type { CallDetail } from "@/actions/calls/get-call-action";
+import { getCallAction } from "@/actions/calls/get-call-action";
 import { acceptCallAction } from "@/actions/calls/accept-call-action";
 import { endCallAction } from "@/actions/calls/end-call-action";
 import { refreshCallTokenAction } from "@/actions/calls/refresh-call-token-action";
@@ -46,19 +46,27 @@ type CallState =
   | "reconnecting"
   | "ended";
 
+const TERMINAL_STATUSES = new Set([
+  "ENDED",
+  "MISSED",
+  "DECLINED",
+  "CANCELLED",
+  "FAILED",
+]);
+
+const HANGUP_MESSAGE = "voxa:hangup";
+const POLL_INTERVAL_MS = 2500;
+const RING_TIMEOUT_MS = 60_000;
+
 // ============================================
 // AUDIO CONFIG (voice-call tuned)
 // ============================================
-//
-// Rules that keep echo cancellation (AEC) stable:
-//  1. Set capture constraints ONCE (no applyConstraints afterwards —
-//     it rebuilds the audio pipeline and resets the echo canceller).
-//  2. Do NOT force sampleRate. The browser picks the best rate for its
-//     AEC; Opus resamples internally.
-//  3. Play remote audio through a plain <audio> element (webAudioMix off)
-//     so the browser can use it as the AEC reference signal.
-//  4. Never stack extra gain / processing on top of the browser's.
-//
+//  - Capture constraints are set once (no applyConstraints later).
+//  - No forced sampleRate: browser picks the best rate for its AEC.
+//  - Remote audio plays through a plain <audio> element
+//    (webAudioMix off) so it stays the AEC reference.
+//  - No extra gain/processing on top of the browser's.
+//  - DTX off: avoids clipped word starts. RED on: survives packet loss.
 
 const AUDIO_CAPTURE_OPTIONS: AudioCaptureOptions = {
   echoCancellation: true,
@@ -68,9 +76,9 @@ const AUDIO_CAPTURE_OPTIONS: AudioCaptureOptions = {
 };
 
 const AUDIO_PUBLISH_OPTIONS: TrackPublishOptions = {
-  audioPreset: { maxBitrate: 32_000 }, // mono Opus wideband, very natural for voice
-  dtx: true, // silence suppression (saves bandwidth)
-  red: true, // redundant audio: resilient to packet loss
+  audioPreset: { maxBitrate: 48_000 }, // mono Opus, clear voice
+  dtx: false,
+  red: true,
   forceStereo: false,
   stopMicTrackOnMute: false, // instant unmute, no permission re-prompt
 };
@@ -93,6 +101,7 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [micAvailable, setMicAvailable] = React.useState(true);
   const [audioBlocked, setAudioBlocked] = React.useState(false);
+  const [declining, setDeclining] = React.useState(false);
 
   const roomRef = React.useRef<Room | null>(null);
   const audioElRef = React.useRef<HTMLAudioElement | null>(null);
@@ -102,28 +111,57 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
   const startedRef = React.useRef(false); // connect only once
   const mountedRef = React.useRef(false); // Strict-Mode safe
   const finishedRef = React.useRef(false); // leave screen only once
+  const endedServerRef = React.useRef(false); // call endCallAction only once
+  const speakerMutedRef = React.useRef(speakerMuted);
+
+  React.useEffect(() => {
+    speakerMutedRef.current = speakerMuted;
+  }, [speakerMuted]);
 
   const otherName = myRole === "caller" ? call.receiverName : call.callerName;
   const otherImage =
     myRole === "caller" ? call.receiverImageUrl : call.callerImageUrl;
 
   // ─────────────────────────────────────────
-  // Leave screen (idempotent)
+  // Helpers
   // ─────────────────────────────────────────
+
+  const leaveRoom = React.useCallback(() => {
+    try {
+      remoteTracksRef.current.forEach((t) => t.detach());
+      remoteTracksRef.current.clear();
+    } catch {}
+    try {
+      // Also stops and releases the local mic track
+      roomRef.current?.disconnect();
+    } catch {}
+    roomRef.current = null;
+  }, []);
 
   const finish = React.useCallback(
     (delayMs = 0) => {
       if (finishedRef.current) return;
       finishedRef.current = true;
       setState("ended");
+      leaveRoom();
       if (delayMs > 0) {
         setTimeout(() => router.replace("/app"), delayMs);
       } else {
         router.replace("/app");
       }
     },
-    [router],
+    [router, leaveRoom],
   );
+
+  const endOnServer = React.useCallback(async () => {
+    if (endedServerRef.current) return;
+    endedServerRef.current = true;
+    try {
+      await endCallAction({ callId: call.id });
+    } catch (err) {
+      console.error("[CallRoom] endCall error:", err);
+    }
+  }, [call.id]);
 
   // ─────────────────────────────────────────
   // Mount / unmount + full cleanup
@@ -131,23 +169,20 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
 
   React.useEffect(() => {
     mountedRef.current = true;
-    const tracks = remoteTracksRef.current;
+
+    const onPageHide = () => {
+      try {
+        roomRef.current?.disconnect();
+      } catch {}
+    };
+    window.addEventListener("pagehide", onPageHide);
 
     return () => {
       mountedRef.current = false;
-
-      try {
-        tracks.forEach((t) => t.detach());
-        tracks.clear();
-      } catch {}
-
-      try {
-        // Also stops and releases the local mic track
-        roomRef.current?.disconnect();
-        roomRef.current = null;
-      } catch {}
+      window.removeEventListener("pagehide", onPageHide);
+      leaveRoom();
     };
-  }, []);
+  }, [leaveRoom]);
 
   // ─────────────────────────────────────────
   // Duration timer
@@ -166,6 +201,70 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [state, call.answeredAt]);
+
+  // ─────────────────────────────────────────
+  // Keep screen awake during the call
+  // ─────────────────────────────────────────
+
+  React.useEffect(() => {
+    if (state !== "connected" && state !== "ringing") return;
+    let lock: { release: () => Promise<void> } | null = null;
+    let cancelled = false;
+
+    try {
+      (navigator as any).wakeLock
+        ?.request("screen")
+        .then((l: any) => {
+          if (cancelled) l.release().catch(() => {});
+          else lock = l;
+        })
+        .catch(() => {});
+    } catch {}
+
+    return () => {
+      cancelled = true;
+      lock?.release().catch(() => {});
+    };
+  }, [state]);
+
+  // ─────────────────────────────────────────
+  // Server status watcher — if the other side declined / cancelled /
+  // ended, close this screen too (works even before anyone joined LiveKit)
+  // ─────────────────────────────────────────
+
+  React.useEffect(() => {
+    if (state === "ended") return;
+    let cancelled = false;
+
+    const id = setInterval(async () => {
+      try {
+        const res = await getCallAction({ callId: call.id });
+        if (cancelled || finishedRef.current || !res.success) return;
+        if (TERMINAL_STATUSES.has(res.call.status)) {
+          endedServerRef.current = true; // already ended server-side
+          finish(state === "incoming" ? 0 : 800);
+        }
+      } catch {}
+    }, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [state, call.id, finish]);
+
+  // ─────────────────────────────────────────
+  // Ring timeout (caller waiting, nobody picks up)
+  // ─────────────────────────────────────────
+
+  React.useEffect(() => {
+    if (state !== "ringing" || myRole !== "caller") return;
+    const id = setTimeout(async () => {
+      await endOnServer();
+      finish(0);
+    }, RING_TIMEOUT_MS);
+    return () => clearTimeout(id);
+  }, [state, myRole, endOnServer, finish]);
 
   // ─────────────────────────────────────────
   // Speaker mute (uses .muted — `.volume` is read-only on iOS Safari)
@@ -210,7 +309,7 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           serverUrl = refresh.serverUrl;
         }
 
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || finishedRef.current) return;
 
         const room = new Room({
           webAudioMix: false, // keep AEC reference intact
@@ -225,10 +324,18 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
         room.on(RoomEvent.ParticipantDisconnected, async () => {
           // Only end when nobody is left (tolerates brief drops)
           if (room.remoteParticipants.size > 0) return;
+          await endOnServer();
+          finish(800);
+        });
+
+        // ── Explicit hang-up message from the other side ──
+        room.on(RoomEvent.DataReceived, async (payload) => {
           try {
-            await endCallAction({ callId: call.id });
+            if (new TextDecoder().decode(payload) === HANGUP_MESSAGE) {
+              await endOnServer();
+              finish(800);
+            }
           } catch {}
-          finish(1500);
         });
 
         // ── Remote audio ──
@@ -260,7 +367,13 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           if (cs === ConnectionState.Reconnecting) {
             setState("reconnecting");
           } else if (cs === ConnectionState.Connected) {
-            setState((prev) => (prev === "reconnecting" ? "connected" : prev));
+            setState((prev) =>
+              prev === "reconnecting"
+                ? room.remoteParticipants.size > 0
+                  ? "connected"
+                  : "ringing"
+                : prev,
+            );
           }
         });
         room.on(RoomEvent.Disconnected, () => finish(0));
@@ -268,12 +381,12 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
         // ── Join ──
         await room.connect(serverUrl, token);
 
-        if (!mountedRef.current) {
+        if (!mountedRef.current || finishedRef.current) {
           room.disconnect();
           return;
         }
 
-        // Unlock audio playback (call originated from a user gesture)
+        // Unlock audio playback
         try {
           await room.startAudio();
         } catch {}
@@ -292,6 +405,11 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           setMicAvailable(false);
         }
 
+        if (finishedRef.current) {
+          room.disconnect();
+          return;
+        }
+
         setState(room.remoteParticipants.size > 0 ? "connected" : "ringing");
       } catch (err: any) {
         console.error("[CallRoom] connect error:", err);
@@ -301,29 +419,27 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
 
     connect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, call.id, call.status, myRole, finish]);
-
-  // Latest speaker state for event handlers (avoids stale closure)
-  const speakerMutedRef = React.useRef(speakerMuted);
-  React.useEffect(() => {
-    speakerMutedRef.current = speakerMuted;
-  }, [speakerMuted]);
+  }, [state, call.id, call.status, myRole, finish, endOnServer]);
 
   // ─────────────────────────────────────────
   // Actions
   // ─────────────────────────────────────────
 
   function handleAccept() {
+    if (declining) return;
     setError(null);
     setState("connecting");
   }
 
   async function handleDecline() {
+    if (declining) return;
+    setDeclining(true);
     try {
       await declineCallAction({ callId: call.id });
     } catch (err) {
       console.error("[CallRoom] decline error:", err);
     }
+    endedServerRef.current = true;
     finish(0);
   }
 
@@ -351,15 +467,14 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
   }
 
   async function hangUp() {
+    // Tell the other side instantly, then end on the server
     try {
-      await endCallAction({ callId: call.id });
-    } catch (err) {
-      console.error("[CallRoom] endCall error:", err);
-    }
-    try {
-      roomRef.current?.disconnect();
-      roomRef.current = null;
+      await roomRef.current?.localParticipant.publishData(
+        new TextEncoder().encode(HANGUP_MESSAGE),
+        { reliable: true },
+      );
     } catch {}
+    await endOnServer();
     finish(0);
   }
 
@@ -405,14 +520,20 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
             <button
               type="button"
               onClick={handleDecline}
+              disabled={declining}
               className={cn(
                 "flex size-16 items-center justify-center rounded-full",
                 "bg-destructive text-white shadow-lg shadow-destructive/30",
                 "transition-transform hover:scale-105 active:scale-95",
+                "disabled:opacity-70 disabled:hover:scale-100",
               )}
               aria-label="Decline"
             >
-              <PhoneOff className="size-6" strokeWidth={2.5} />
+              {declining ? (
+                <Loader2 className="size-6 animate-spin" />
+              ) : (
+                <PhoneOff className="size-6" strokeWidth={2.5} />
+              )}
             </button>
             <span className="text-xs font-medium text-muted-foreground">
               Decline
@@ -423,10 +544,12 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
             <button
               type="button"
               onClick={handleAccept}
+              disabled={declining}
               className={cn(
                 "flex size-16 items-center justify-center rounded-full",
                 "bg-green-500 text-white shadow-lg shadow-green-500/30",
                 "transition-transform hover:scale-105 active:scale-95",
+                "disabled:opacity-50 disabled:hover:scale-100",
               )}
               aria-label="Accept"
             >
@@ -564,11 +687,7 @@ export function CallRoom({ call, myRole }: CallRoomProps) {
           className="flex size-16 items-center justify-center rounded-full bg-destructive text-white transition-opacity hover:opacity-90"
           aria-label="Hang up"
         >
-          {state === "connecting" ? (
-            <Loader2 className="size-6 animate-spin" />
-          ) : (
-            <PhoneOff className="size-6" />
-          )}
+          <PhoneOff className="size-6" />
         </button>
       </div>
     </div>

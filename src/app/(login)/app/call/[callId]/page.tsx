@@ -1,17 +1,19 @@
-// src/app/(login)/app/call/[callId]/page.tsx
 import React from "react";
 import { notFound } from "next/navigation";
 
 import { getCallAction } from "@/actions/calls/get-call-action";
 import { CallRoom } from "@/components/site/pages/callroom/call-room";
+// ⚠️ Must be the SAME file as the one above (old callroom/ file → delete it)
 
-// ============================================
-// CALL PAGE
-// ============================================
-//
-// Renders the LiveKit call UI for /app/call/<id>
-//
+export const dynamic = "force-dynamic";
 
+const FINISHED_STATUSES = [
+  "ENDED",
+  "MISSED",
+  "DECLINED",
+  "CANCELLED",
+  "FAILED",
+];
 
 export default async function CallPage({
   params,
@@ -29,13 +31,7 @@ export default async function CallPage({
   const { call, myRole } = result;
 
   // Call already finished — friendly end screen
-  if (
-    call.status === "ENDED" ||
-    call.status === "MISSED" ||
-    call.status === "DECLINED" ||
-    call.status === "CANCELLED" ||
-    call.status === "FAILED"
-  ) {
+  if (FINISHED_STATUSES.includes(call.status)) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 text-center text-foreground">
         <h1 className="text-xl font-semibold">Call ended</h1>
@@ -55,7 +51,7 @@ export default async function CallPage({
     );
   }
 
-  return <CallRoom call={call} myRole={myRole} />;
+  return <CallRoom key={call.id} call={call} myRole={myRole} />;
 }
 
 function formatDuration(seconds: number): string {
