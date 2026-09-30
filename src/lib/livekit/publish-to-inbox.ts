@@ -1,10 +1,6 @@
 // src/lib/livekit/publish-to-inbox.ts
 import { RoomServiceClient, DataPacket_Kind } from "livekit-server-sdk";
 
-// ============================================
-// ROOM SERVICE CLIENT
-// ============================================
-
 let cachedClient: RoomServiceClient | null = null;
 
 function getRoomService(): RoomServiceClient {
@@ -28,10 +24,6 @@ function getRoomService(): RoomServiceClient {
   return cachedClient;
 }
 
-// ============================================
-// MESSAGE TYPES
-// ============================================
-
 export type InboxMessage =
   | {
       type: "CALL_INCOMING";
@@ -39,28 +31,15 @@ export type InboxMessage =
       callerName: string;
       callerImageUrl: string | null;
     }
-  | {
-      type: "CALL_ACCEPTED";
-      callId: string;
-    }
-  | {
-      type: "CALL_ENDED";
-      callId: string;
-    }
-  | {
-      type: "CALL_CANCELLED";
-      callId: string;
-    }
+  | { type: "CALL_ACCEPTED"; callId: string }
+  | { type: "CALL_ENDED"; callId: string }
+  | { type: "CALL_CANCELLED"; callId: string }
   | {
       type: "MESSAGE_NEW";
       conversationId: string;
       preview: string;
       senderId: string;
     };
-
-// ============================================
-// PUBLISH
-// ============================================
 
 export async function publishToInbox(
   userId: string,
@@ -69,13 +48,17 @@ export async function publishToInbox(
   const roomName = `inbox_${userId}`;
   const payload = new TextEncoder().encode(JSON.stringify(message));
 
+  console.log(`[publishToInbox] → ${message.type} to ${roomName}`);
+
   try {
     const svc = getRoomService();
     await svc.sendData(roomName, payload, DataPacket_Kind.RELIABLE);
+    console.log(`[publishToInbox] ✅ sent ${message.type} to ${roomName}`);
   } catch (err: any) {
-    console.warn(
-      `[publishToInbox] Failed to deliver ${message.type} to ${userId}:`,
+    console.error(
+      `[publishToInbox] ❌ FAILED for ${roomName}:`,
       err?.message,
+      err?.stack,
     );
   }
 }
